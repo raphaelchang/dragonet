@@ -5,6 +5,7 @@
 #include "rpmsg_queue.h"
 #include "rpmsg_ns.h"
 
+#include <string>
 #include <map>
 #include <function>
 #include <vector>
@@ -58,8 +59,7 @@ public:
         }
     }
 
-    template<class MessageType>
-    void RegisterSubscription(const char *channel, void (*callback)(const MessageType *msg), int queue_size)
+    void RegisterSubscription(const char *channel, std::function><void(char*)> callback, int msg_size, int queue_size)
     {
         TaskHandle_t t = xTaskGetCurrentTaskHandle();
         if (xSemaphoreTake(queue_set_map_mutex_, (TickType_t) 1000) == pdTRUE)
@@ -75,8 +75,7 @@ public:
             return;
         }
         xSemaphoreGive(queue_set_map_mutex_);
-        MessageType msg;
-        QueueHandle_t q = xQueueCreate(queue_size, msg.getEncodedSize());
+        QueueHandle_t q = xQueueCreate(queue_size, msg_size);
         xQueueAddToSet(q, queue_set_map_[t]);
         if (xSemaphoreTake(subscriber_queues_mutex_, (TickType_t) 1000) == pdTRUE)
         {
@@ -95,11 +94,7 @@ public:
         xSemaphoreGive(subscriber_queues_mutex_);
         if (xSemaphoreTake(subscribers_mutex_, (TickType_t) 1000) == pdTRUE)
         {
-            subscribers_[q] = [](char *data) {
-                MessageType msg;
-                msg.decode(data, 0, msg.getEncodedSize());
-                callback(&msg);
-            };
+            subscribers_[q] = callback;
         }
         else
         {
@@ -108,24 +103,21 @@ public:
         xSemaphoreGive(subscribers_mutex_);
     }
 
-    template<class MessageType>
-    void PublishMessage(const char *channel, const MessageType *msg)
+    void PublishMessage(const char *channel, const char *msg, int size)
     {
         TaskHandle_t t = xTaskGetCurrentTaskHandle();
-        char buf[256];
-        msg.encode((char*) buf, 0, msg.getEncodedSize());
         // Intra-core subscribers
         for (std::tuple<QueueHandle_t, TaskHandle_t> &qt : subscriber_queues_)
         {
             // Intra-task subscribers
             if (std::get<1>(qt) == t)
             {
-                subscribers_[std::get<0>(qt)]((char*) buf);
+                subscribers_[std::get<0>(qt)](msg);
             }
             // Inter-task subscribers
             else
             {
-                xQueueSend(std::get<0>(qt), (char*) buf, 0);
+                xQueueSend(std::get<0>(qt), msg, 0);
             }
         }
         // Inter-core subscribers
@@ -133,7 +125,7 @@ public:
         {
             for (std::tuple<rpmsg_lite_endpoint*, unsigned long> &ept : publish_epts_[std::string(channel)])
             {
-                rpmsg_lite_send(rpmsg_, std::get<0>(ept), std::get<1>(ept), (char*) buf, msg.getEncodedSize(), 0);
+                rpmsg_lite_send(rpmsg_, std::get<0>(ept), std::get<1>(ept), msg, size, 0);
             }
         }
     }
@@ -177,29 +169,14 @@ private:
     SemaphoreHandle_t subscriber_queues_mutex_;
     static StaticSemaphore_t publish_epts_mutex_buffer_;
     static SemaphoreHandle_t publish_epts_mutex_;
-}
+};
 
 Dragonet::Dragonet()
     : impl_(new DragonetImpl())
 {
 }
 
-Dragonet::~Dragonet()
-{
-}
-
-template<class MessageType>
-int Dragonet::Publish(const char *channel, const MessageType *msg)
-{
-    impl_->PublishMessage(channel, msg);
-    return 0;
-}
-
-template<class MessageType>
-void Dragonet::Subscribe(const char *channel, void (*callback)(const MessageType *msg), int queue_size=10)
-{
-    impl_->RegisterSubscription(channel, callback, queue_size);
-}
+Dragonet::~Dragonet() = default;
 
 void Dragonet::Spin()
 {
@@ -207,6 +184,17 @@ void Dragonet::Spin()
     {
         impl_->DispatchCallbacks();
     }
+}
+
+int Dragonet::serializeAndPublish(const char *channel, const char *msg, int size)
+{
+    impl_->PublishMessage(channel, (char*) msg, size);
+    return 0;
+}
+
+void Dragonet::subscribeSerialized(const char *channel, std::function<void(char*)> callback, int msg_size, int queue_size)
+{
+    impl_->RegisterSubscription(channel, callback, msg_size, queue_size);
 }
 
 }
