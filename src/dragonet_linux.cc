@@ -34,11 +34,7 @@ public:
 
     void RegisterSubscription(const char *channel, std::function<void(char*)> callback, int msg_size, int queue_size)
     {
-        std::function<void(const lcm::ReceiveBuffer* rbuf, const std::string& channel, void*)> callback_lcm
-            = [&](const lcm::ReceiveBuffer* rbuf, const std::string& channel, void*) {
-            callback((char*) rbuf->data);
-        };
-        lcm_.subscribeFunction(std::string(channel), *callback_lcm.target<void(*)(const lcm::ReceiveBuffer* rbuf, const std::string& channel, void*)>(), (void*)NULL);
+        lcm_.subscribeFunction(std::string(channel), lcmCallback, &callback);
 
         struct rpmsg_endpoint_info info;
         strcpy(info.name, channel);
@@ -96,6 +92,11 @@ private:
         event.data.fd = fd;
         epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, 0, &event);
     }
+
+    static void lcmCallback(const lcm::ReceiveBuffer* rbuf, const std::string& channel, std::function<void(char*)> *callback)
+    {
+        (*callback)((char*) rbuf->data);
+    };
 
     lcm::LCM lcm_;
     std::map<int, std::function<void(void)>> fd_callbacks_;
