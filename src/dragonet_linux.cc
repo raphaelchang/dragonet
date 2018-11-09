@@ -3,10 +3,14 @@
 #include <lcm/lcm-cpp.hpp>
 
 #include <sys/ioctl.h>
+#include <sys/file.h>
 #include <linux/rpmsg.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <dirent.h>
 #include <unistd.h>
 #include <sys/epoll.h>
+#include <csignal>
 #include <string.h>
 #include <string>
 #include <map>
@@ -23,6 +27,7 @@ class DragonetImpl
 public:
     DragonetImpl()
     {
+        signal(SIGPIPE, SIG_IGN);
         epoll_fd_ = epoll_create1(0);
         if (!lcm_.good())
         {
@@ -37,21 +42,19 @@ public:
         lcm_.subscribeFunction(std::string(channel), lcmCallback, &callback);
 
         struct rpmsg_endpoint_info info;
-        strcpy(info.name, channel);
+        sprintf(info.name, "%s__s", channel);
         info.src = RPMSG_ADDR_ANY;
-        info.dst = 0;
-        int fd = open("/dev/rpmsg_ctrl0", O_RDWR);
-        if (fd == -1)
+        info.dst = RPMSG_ADDR_ANY;
+        int dev_num = createEptDev(&info);
+        if (dev_num == -1)
         {
             return;
         }
-        ioctl(fd, RPMSG_CREATE_EPT_IOCTL, &info);
-        close(fd);
-        // TODO: get device file from sysfs
-        // ...
-        //open("", O_RDONLY);
+        char dev_path[24];
+        sprintf(dev_path, "/dev/rpmsg%d", dev_num);
+        int fd = open(dev_path, O_RDONLY);
         fd_callbacks_[fd] = [&]() {
-            char buf[256];
+            char buf[MAX_MESSAGE_SIZE];
             int len = read(fd, (char*) buf, msg_size);
             if (len == msg_size)
             {
@@ -67,11 +70,23 @@ public:
         lcm_.publish(std::string(channel), msg, size);
 
         // Inter-core subscribers
-        // TODO: search through device files for matching channel
-        // ...
-        //open(fd, O_WRONLY);
-        //write(fd, msg, size);
-        //close(fd);
+        if (publisher_fds_.find(std::string(channel)) == publisher_fds_.end())
+        {
+            struct rpmsg_endpoint_info info;
+            sprintf(info.name, "%s__p", channel);
+            info.src = RPMSG_ADDR_ANY;
+            info.dst = RPMSG_ADDR_ANY;
+            int dev_num = createEptDev(&info);
+            if (dev_num == -1)
+            {
+                return;
+            }
+            char dev_path[24];
+            sprintf(dev_path, "/dev/rpmsg%d", dev_num);
+            int fd = open(dev_path, O_WRONLY);
+            publisher_fds_[std::string(channel)] = fd;
+        }
+        write(publisher_fds_[std::string(channel)], msg, size);
     }
 
     void DispatchCallbacks()
@@ -85,6 +100,56 @@ public:
     }
 
 private:
+    int createEptDev(rpmsg_endpoint_info *info)
+    {
+        int fd = open("/dev/rpmsg_ctrl0", O_RDWR);
+        if (fd == -1)
+        {
+            return -1;
+        }
+        flock(fd, LOCK_EX);
+        ioctl(fd, RPMSG_CREATE_EPT_IOCTL, info);
+        DIR *sys_class_dir;
+        if ((sys_class_dir = opendir("/sys/class/rpmsg")) == NULL)
+        {
+            return -1;
+        }
+        struct dirent *dev_ent;
+        int highest_dev = 0;
+        while ((dev_ent = readdir(sys_class_dir)) != NULL)
+        {
+            if (dev_ent->d_type == DT_DIR)
+            {
+                int dev_num = atoi(&dev_ent->d_name[5]);
+                if (dev_num > highest_dev)
+                {
+                    highest_dev = dev_num;
+                }
+            }
+        }
+        closedir(sys_class_dir);
+        int dev_num = highest_dev;
+        for (int i = highest_dev; i >= 0; i--)
+        {
+            char name_path[40];
+            sprintf(name_path, "/sys/class/rpmsg/rpmsg%d/name", i);
+            int name_fd;
+            if ((name_fd = open(name_path, O_RDONLY)) != -1)
+            {
+                char name[32];
+                read(name_fd, name, 32);
+                if (strcmp(name, info->name) == 0)
+                {
+                    dev_num = i;
+                    break;
+                }
+                close(name_fd);
+            }
+        }
+        close(fd);
+        return dev_num;
+    }
+
     void addFileDescriptorToEpoll(int fd)
     {
         struct epoll_event event;
@@ -100,6 +165,7 @@ private:
 
     lcm::LCM lcm_;
     std::map<int, std::function<void(void)>> fd_callbacks_;
+    std::map<std::string, int> publisher_fds_;
     int epoll_fd_;
 };
 

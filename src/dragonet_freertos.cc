@@ -36,7 +36,7 @@ static void subscriber_ept_rx_cb(void *payload, int payload_len, unsigned long s
 
 static void publisher_ns_new_ept_cb(unsigned int new_ept, const char *new_ept_name, unsigned long flags)
 {
-    if (flags == RL_NS_CREATE)
+    if (flags == RL_NS_CREATE && strcmp(&new_ept_name[strlen(new_ept_name) - 3], "__s") == 0)
     {
         DragonetImpl::RegisterPublishEndpoint(new_ept_name, new_ept);
     }
@@ -52,7 +52,7 @@ public:
         subscriber_queues_mutex_ = xSemaphoreCreateMutexStatic(&subscriber_queues_mutex_buffer_);
         publish_epts_mutex_ = xSemaphoreCreateMutexStatic(&publish_epts_mutex_buffer_);
         rpmsg_ = rpmsg_lite_remote_init(rpmsg_lite_base_, RL_PLATFORM_IMX6SX_M4_LINK_ID, RL_NO_FLAGS);
-        rpmsg_ns_bind(rpmsg_, publisher_ns_new_ept_cb);
+        rpmsg_ns_bind(rpmsg_, publisher_ns_new_ept_cb, NULL);
         while(!rpmsg_lite_is_link_up(rpmsg_))
         {
             vTaskDelay(100);
@@ -83,7 +83,9 @@ public:
             {
                 subscriber_queues_[std::string(channel)] = std::vector<std::tuple<QueueHandle_t, TaskHandle_t>>();
                 rpmsg_lite_endpoint *ept = rpmsg_lite_create_ept(rpmsg_, RL_ADDR_ANY, subscriber_ept_rx_cb, &subscriber_queues_[std::string(channel)]);
-                rpmsg_ns_announce(rpmsg_, ept, channel, RL_NS_CREATE);
+                char name[32];
+                sprintf(name, "%s__p", channel);
+                rpmsg_ns_announce(rpmsg_, ept, name, RL_NS_CREATE);
             }
             subscriber_queues_[std::string(channel)].push_back(std::make_tuple(q, t))
         }
@@ -144,13 +146,15 @@ public:
 
     static void RegisterPublishEndpoint(const char *channel, unsigned long dst)
     {
+        std::string name(channel);
+        name = name.substr(0, name.length() - 3);
         // TODO: make thread safe
         rpmsg_lite_endpoint *ept = rpmsg_lite_create_ept(rpmsg_, RL_ADDR_ANY, publisher_ept_rx_cb, NULL);
-        if (publish_epts_.find(std::string(channel)) == publish_epts_.end())
+        if (publish_epts_.find(name) == publish_epts_.end())
         {
-            publish_epts_[std::string(channel)] = std::vector<std::tuple<rpmsg_lite_endpoint*, unsigned long>>();
+            publish_epts_[name] = std::vector<std::tuple<rpmsg_lite_endpoint*, unsigned long>>();
         }
-        publish_epts_[std::string(channel)].push_back(std::make_tuple(ept, dst));
+        publish_epts_[name].push_back(std::make_tuple(ept, dst));
     }
 
 private:

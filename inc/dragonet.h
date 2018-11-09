@@ -3,6 +3,8 @@
 #include <memory>
 #include <functional>
 
+#define MAX_MESSAGE_SIZE 256
+
 namespace dragonet
 {
 
@@ -17,7 +19,7 @@ public:
     template<class MessageType>
     int Publish(const char *channel, const MessageType *msg)
     {
-        char buf[256];
+        char buf[MAX_MESSAGE_SIZE];
         msg->encode((char*) buf, 0, msg->getEncodedSize());
         return serializeAndPublish(channel, (char*) buf, msg->getEncodedSize());
     }
