@@ -1,6 +1,10 @@
 #include "dragonet.h"
 
 #include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "semphr.h"
+
 #include "rpmsg_lite.h"
 #include "rpmsg_queue.h"
 #include "rpmsg_ns.h"
