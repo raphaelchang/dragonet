@@ -9,7 +9,9 @@ find_package(lcm REQUIRED)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inc)
 
-add_library(${PROJECT_NAME} SHARED src/dragonet_linux.cc)
+add_library(${PROJECT_NAME} SHARED ${CMAKE_CURRENT_SOURCE_DIR}/src/dragonet_linux.cc)
+
+target_link_libraries(${PROJECT_NAME} lcm)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     VERSION 1.0.0
@@ -19,7 +21,5 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION lib
     PUBLIC_HEADER DESTINATION include)
-
-#add_library(${PROJECT_NAME} STATIC src/dragonet_freertos.cc)
 
 export(PACKAGE ${PROJECT_NAME})

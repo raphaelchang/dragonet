@@ -17,6 +17,8 @@
 #include <functional>
 #include <vector>
 
+#include <iostream>
+
 namespace dragonet {
 
 #define MAX_EVENTS 100
@@ -33,7 +35,7 @@ public:
         {
             // TODO: panic
         }
-        fd_callbacks_[lcm_.getFileno()] = std::bind(&lcm::LCM::handle, lcm_);
+        fd_callbacks_[lcm_.getFileno()] = std::bind(&lcm::LCM::handle, &lcm_);
         addFileDescriptorToEpoll(lcm_.getFileno());
     }
 
@@ -53,7 +55,7 @@ public:
         char dev_path[24];
         sprintf(dev_path, "/dev/rpmsg%d", dev_num);
         int fd = open(dev_path, O_RDONLY);
-        fd_callbacks_[fd] = [&]() {
+        fd_callbacks_[fd] = [=]() {
             char buf[MAX_MESSAGE_SIZE];
             int len = read(fd, (char*) buf, msg_size);
             if (len == msg_size)
@@ -76,10 +78,10 @@ public:
             sprintf(info.name, "%s__p", channel);
             info.src = RPMSG_ADDR_ANY;
             info.dst = RPMSG_ADDR_ANY;
-            int dev_num = createEptDev(&info);
+            int dev_num = findEptDevByName(info.name);
             if (dev_num == -1)
             {
-                return;
+                dev_num = createEptDev(&info);
             }
             char dev_path[24];
             sprintf(dev_path, "/dev/rpmsg%d", dev_num);
@@ -109,6 +111,13 @@ private:
         }
         flock(fd, LOCK_EX);
         ioctl(fd, RPMSG_CREATE_EPT_IOCTL, info);
+        int dev_num = findEptDevByName(info->name);
+        close(fd);
+        return dev_num;
+    }
+
+    int findEptDevByName(const char *name)
+    {
         DIR *sys_class_dir;
         if ((sys_class_dir = opendir("/sys/class/rpmsg")) == NULL)
         {
@@ -128,7 +137,7 @@ private:
             }
         }
         closedir(sys_class_dir);
-        int dev_num = highest_dev;
+        int dev_num = -1;
         for (int i = highest_dev; i >= 0; i--)
         {
             char name_path[40];
@@ -136,9 +145,9 @@ private:
             int name_fd;
             if ((name_fd = open(name_path, O_RDONLY)) != -1)
             {
-                char name[32];
-                read(name_fd, name, 32);
-                if (strcmp(name, info->name) == 0)
+                char cur_name[32];
+                read(name_fd, cur_name, 32);
+                if (strcmp(cur_name, name) == 0)
                 {
                     dev_num = i;
                     break;
@@ -146,7 +155,6 @@ private:
                 close(name_fd);
             }
         }
-        close(fd);
         return dev_num;
     }
 
@@ -170,11 +178,19 @@ private:
 };
 
 Dragonet::Dragonet()
-    : impl_(new DragonetImpl())
 {
 }
 
 Dragonet::~Dragonet() = default;
+
+void Dragonet::Init()
+{
+    if (!initialized_)
+    {
+        impl_.reset(new DragonetImpl());
+        initialized_ = true;
+    }
+}
 
 void Dragonet::Spin()
 {

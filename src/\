@@ -20,7 +20,6 @@ extern "C"
 #include <map>
 #include <functional>
 #include <vector>
-#include <unordered_set>
 
 namespace dragonet {
 
@@ -46,7 +45,6 @@ public:
         queue_set_map_mutex_ = xSemaphoreCreateMutex();
         subscriber_queues_mutex_ = xSemaphoreCreateMutex();
         publish_epts_mutex_ = xSemaphoreCreateMutex();
-        pending_subscriptions_ = xQueueCreate(16, sizeof(PendingSubscription_t));
         env_init();
         rpmsg_ = rpmsg_lite_remote_init(rpmsg_lite_base_, PLATFORM_LINK_ID, RL_NO_FLAGS);
         rpmsg_ns_bind(rpmsg_, publisher_ns_new_ept_cb, this);
@@ -66,7 +64,7 @@ public:
     void RegisterSubscription(const char *channel, std::function<void(char*)> callback, int msg_size, int queue_size)
     {
         TaskHandle_t t = xTaskGetCurrentTaskHandle();
-        if (xSemaphoreTake(queue_set_map_mutex_, portMAX_DELAY) == pdTRUE)
+        if (xSemaphoreTake(queue_set_map_mutex_, (TickType_t) 1000) == pdTRUE)
         {
             if (queue_set_map_.find(t) == queue_set_map_.end())
             {
@@ -81,7 +79,7 @@ public:
         xSemaphoreGive(queue_set_map_mutex_);
         QueueHandle_t q = xQueueCreate(queue_size, msg_size);
         xQueueAddToSet(q, queue_set_map_[t]);
-        if (xSemaphoreTake(subscriber_queues_mutex_, portMAX_DELAY) == pdTRUE)
+        if (xSemaphoreTake(subscriber_queues_mutex_, (TickType_t) 1000) == pdTRUE)
         {
             if (subscriber_queues_.find(std::string(channel)) == subscriber_queues_.end())
             {
@@ -98,7 +96,7 @@ public:
             return;
         }
         xSemaphoreGive(subscriber_queues_mutex_);
-        if (xSemaphoreTake(subscribers_mutex_, portMAX_DELAY) == pdTRUE)
+        if (xSemaphoreTake(subscribers_mutex_, (TickType_t) 1000) == pdTRUE)
         {
             subscribers_[q] = callback;
         }
@@ -127,26 +125,11 @@ public:
             }
         }
         // Inter-core subscribers
-        PendingSubscription_t pending;
-        while(xQueueReceive(pending_subscriptions_, &pending, 0) == pdTRUE)
-        {
-            std::string name(pending.channel);
-            name = name.substr(0, name.length() - 3);
-            if (pending.create)
-            {
-                RegisterPublishEndpoint(name, pending.dst);
-            }
-            else
-            {
-                UnregisterPublishEndpoint(name, pending.dst);
-            }
-        }
         if (publish_epts_.find(std::string(channel)) != publish_epts_.end())
         {
-            rpmsg_lite_endpoint *ept = std::get<0>(publish_epts_[std::string(channel)]);
-            for (unsigned long dst : std::get<1>(publish_epts_[std::string(channel)]))
+            for (std::tuple<rpmsg_lite_endpoint*, unsigned long> &ept : publish_epts_[std::string(channel)])
             {
-                rpmsg_lite_send(rpmsg_, ept, dst, const_cast<char*>(msg), size, 0);
+                rpmsg_lite_send(rpmsg_, std::get<0>(ept), std::get<1>(ept), const_cast<char*>(msg), size, 0);
             }
         }
     }
@@ -166,47 +149,32 @@ public:
         }
     }
 
-    void RegisterPublishEndpoint(std::string name, unsigned long dst)
+    void RegisterPublishEndpoint(const char *channel, unsigned long dst)
     {
+        std::string name(channel);
+        name = name.substr(0, name.length() - 3);
+        PRINTF("new pub 0\r\n");
         rpmsg_lite_endpoint *ept = rpmsg_lite_create_ept(rpmsg_, RL_ADDR_ANY, publisher_ept_rx_cb, NULL);
         // TODO: move this out of ISR so simultaneous subscribes don't fail
-        if (xSemaphoreTake(publish_epts_mutex_, portMAX_DELAY) == pdTRUE)
+        BaseType_t higherPriorityTaskWokenTake = pdFALSE;
+        BaseType_t higherPriorityTaskWokenGive = pdFALSE;
+        PRINTF("new pub 1\r\n");
+        if (xSemaphoreTakeFromISR(publish_epts_mutex_, &higherPriorityTaskWokenTake) == pdTRUE)
         {
+        PRINTF("new pub 2\r\n");
             if (publish_epts_.find(name) == publish_epts_.end())
             {
-                publish_epts_[name] = std::make_tuple(ept, std::unordered_set<unsigned long>());
+                publish_epts_[name] = std::vector<std::tuple<rpmsg_lite_endpoint*, unsigned long>>();
             }
-            std::get<1>(publish_epts_[name]).insert(dst);
+            publish_epts_[name].push_back(std::make_tuple(ept, dst));
+        PRINTF("new pub 3\r\n");
         }
         else
         {
             return;
         }
-        xSemaphoreGive(publish_epts_mutex_);
-    }
-
-    void UnregisterPublishEndpoint(std::string name, unsigned long dst)
-    {
-        if (xSemaphoreTake(publish_epts_mutex_, portMAX_DELAY) == pdTRUE)
-        {
-            if (publish_epts_.find(name) != publish_epts_.end())
-            {
-                std::get<1>(publish_epts_[name]).erase(dst);
-            }
-        }
-        else
-        {
-            return;
-        }
-        xSemaphoreGive(publish_epts_mutex_);
-    }
-
-    void PendSubscription(const char *channel, unsigned long dst, bool create)
-    {
-        BaseType_t higherPriorityTaskWoken = pdFALSE;
-        PendingSubscription_t pend{channel, dst, create};
-        xQueueSendFromISR(pending_subscriptions_, &pend, &higherPriorityTaskWoken);
-        if (higherPriorityTaskWoken == pdTRUE)
+        xSemaphoreGiveFromISR(publish_epts_mutex_, &higherPriorityTaskWokenGive);
+        if (higherPriorityTaskWokenTake == pdTRUE || higherPriorityTaskWokenGive == pdTRUE)
         {
             taskYIELD();
         }
@@ -218,7 +186,7 @@ private:
     std::map<QueueHandle_t, std::function<void(char*)>> subscribers_;
     std::map<TaskHandle_t, QueueSetHandle_t> queue_set_map_;
     std::map<std::string, std::vector<std::tuple<QueueHandle_t, TaskHandle_t>>> subscriber_queues_;
-    std::map<std::string, std::tuple<rpmsg_lite_endpoint*, std::unordered_set<unsigned long>>> publish_epts_;
+    std::map<std::string, std::vector<std::tuple<rpmsg_lite_endpoint*, unsigned long>>> publish_epts_;
 
     //StaticSemaphore_t subscribers_mutex_buffer_;
     SemaphoreHandle_t subscribers_mutex_;
@@ -228,15 +196,6 @@ private:
     SemaphoreHandle_t subscriber_queues_mutex_;
     //static StaticSemaphore_t publish_epts_mutex_buffer_;
     SemaphoreHandle_t publish_epts_mutex_;
-
-    QueueHandle_t pending_subscriptions_;
-
-    typedef struct
-    {
-        const char *channel;
-        unsigned long dst;
-        bool create;
-    } PendingSubscription_t;
 };
 
 extern "C"
@@ -270,9 +229,11 @@ static int subscriber_ept_rx_cb(void *payload, int payload_len, unsigned long sr
 
 static void publisher_ns_new_ept_cb(unsigned int new_ept, const char *new_ept_name, unsigned long flags, void *impl_instance)
 {
-    if (strcmp(&new_ept_name[strlen(new_ept_name) - 3], "__s") == 0)
+    if (flags == RL_NS_CREATE && strcmp(&new_ept_name[strlen(new_ept_name) - 3], "__s") == 0)
     {
-        ((DragonetImpl*)impl_instance)->PendSubscription(new_ept_name, new_ept, flags == RL_NS_CREATE);
+        PRINTF("new sub %s\r\n", new_ept_name);
+        ((DragonetImpl*)impl_instance)->RegisterPublishEndpoint(new_ept_name, new_ept);
+        PRINTF("new sub 2 %s\r\n", new_ept_name);
     }
 }
 }
