@@ -17,7 +17,7 @@
 #include <functional>
 #include <vector>
 
-#include <iostream>
+#include <errno.h>
 
 namespace dragonet {
 
@@ -78,10 +78,10 @@ public:
             sprintf(info.name, "%s__p", channel);
             info.src = RPMSG_ADDR_ANY;
             info.dst = RPMSG_ADDR_ANY;
-            int dev_num = findEptDevByName(info.name);
+            int dev_num = createEptDev(&info);
             if (dev_num == -1)
             {
-                dev_num = createEptDev(&info);
+                return;
             }
             char dev_path[24];
             sprintf(dev_path, "/dev/rpmsg%d", dev_num);
@@ -127,12 +127,12 @@ private:
         int highest_dev = 0;
         while ((dev_ent = readdir(sys_class_dir)) != NULL)
         {
-            if (dev_ent->d_type == DT_DIR)
+            if (dev_ent->d_type == DT_LNK)
             {
-                int dev_num = atoi(&dev_ent->d_name[5]);
-                if (dev_num > highest_dev)
+                int dev_ent_num = atoi(&dev_ent->d_name[5]);
+                if (dev_ent_num > highest_dev)
                 {
-                    highest_dev = dev_num;
+                    highest_dev = dev_ent_num;
                 }
             }
         }
@@ -145,11 +145,13 @@ private:
             int name_fd;
             if ((name_fd = open(name_path, O_RDONLY)) != -1)
             {
-                char cur_name[32];
+                char cur_name[33];
                 read(name_fd, cur_name, 32);
+                *(strchr(cur_name, '\n')) = '\0';
                 if (strcmp(cur_name, name) == 0)
                 {
                     dev_num = i;
+                    close(name_fd);
                     break;
                 }
                 close(name_fd);
@@ -163,7 +165,7 @@ private:
         struct epoll_event event;
         event.events = EPOLLIN;
         event.data.fd = fd;
-        epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, 0, &event);
+        int res = epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event);
     }
 
     static void lcmCallback(const lcm::ReceiveBuffer* rbuf, const std::string& channel, std::function<void(char*)> *callback)

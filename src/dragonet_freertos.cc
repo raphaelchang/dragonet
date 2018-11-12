@@ -10,7 +10,6 @@ extern "C"
 #include "rpmsg_lite.h"
 #include "rpmsg_queue.h"
 #include "rpmsg_ns.h"
-#include "debug_console_imx.h" 
 
 #include <string.h>
 }
