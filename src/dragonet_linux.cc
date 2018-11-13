@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <sys/epoll.h>
 #include <csignal>
 #include <string.h>
@@ -33,49 +34,33 @@ public:
         epoll_fd_ = epoll_create1(0);
         if (!lcm_.good())
         {
-            // TODO: panic
+            fprintf(stderr, "[WARNING] LCM initialization error, disabling LCM\r\n");
+            use_lcm_ = false;
         }
-        fd_callbacks_[lcm_.getFileno()] = std::bind(&lcm::LCM::handle, &lcm_);
-        addFileDescriptorToEpoll(lcm_.getFileno());
+        else
+        {
+            fd_callbacks_[lcm_.getFileno()] = std::bind(&lcm::LCM::handle, &lcm_);
+            addFileDescriptorToEpoll(lcm_.getFileno());
+        }
+        struct stat stat_buf;
+        if (stat("/dev/rpmsg_ctrl0", &stat_buf) != 0)
+        {
+            fprintf(stderr, "[WARNING] rpmsg_char driver not loaded, not using RPMsg communication\r\n");
+            use_rpmsg_ = false;
+        }
     }
 
     void RegisterSubscription(const char *channel, std::function<void(char*)> callback, int msg_size, int queue_size)
     {
-        lcm_.subscribeFunction(std::string(channel), lcmCallback, &callback);
-
-        struct rpmsg_endpoint_info info;
-        sprintf(info.name, "%s__s", channel);
-        info.src = RPMSG_ADDR_ANY;
-        info.dst = RPMSG_ADDR_ANY;
-        int dev_num = createEptDev(&info);
-        if (dev_num == -1)
+        if (use_lcm_)
         {
-            return;
+            lcm_.subscribeFunction(std::string(channel), lcmCallback, &callback);
         }
-        char dev_path[24];
-        sprintf(dev_path, "/dev/rpmsg%d", dev_num);
-        int fd = open(dev_path, O_RDONLY);
-        fd_callbacks_[fd] = [=]() {
-            char buf[MAX_MESSAGE_SIZE];
-            int len = read(fd, (char*) buf, msg_size);
-            if (len == msg_size)
-            {
-                callback((char*) buf);
-            }
-        };
-        addFileDescriptorToEpoll(fd);
-    }
 
-    void PublishMessage(const char *channel, const char *msg, int size)
-    {
-        // Intra-core subscribers
-        lcm_.publish(std::string(channel), msg, size);
-
-        // Inter-core subscribers
-        if (publisher_fds_.find(std::string(channel)) == publisher_fds_.end())
+        if (use_rpmsg_)
         {
             struct rpmsg_endpoint_info info;
-            sprintf(info.name, "%s__p", channel);
+            sprintf(info.name, "%s__s", channel);
             info.src = RPMSG_ADDR_ANY;
             info.dst = RPMSG_ADDR_ANY;
             int dev_num = createEptDev(&info);
@@ -85,10 +70,48 @@ public:
             }
             char dev_path[24];
             sprintf(dev_path, "/dev/rpmsg%d", dev_num);
-            int fd = open(dev_path, O_WRONLY);
-            publisher_fds_[std::string(channel)] = fd;
+            int fd = open(dev_path, O_RDONLY);
+            fd_callbacks_[fd] = [=]() {
+                char buf[MAX_MESSAGE_SIZE];
+                int len = read(fd, (char*) buf, msg_size);
+                if (len == msg_size)
+                {
+                    callback((char*) buf);
+                }
+            };
+            addFileDescriptorToEpoll(fd);
         }
-        write(publisher_fds_[std::string(channel)], msg, size);
+    }
+
+    void PublishMessage(const char *channel, const char *msg, int size)
+    {
+        // Intra-core subscribers
+        if (use_lcm_)
+        {
+            lcm_.publish(std::string(channel), msg, size);
+        }
+
+        // Inter-core subscribers
+        if (use_rpmsg_)
+        {
+            if (publisher_fds_.find(std::string(channel)) == publisher_fds_.end())
+            {
+                struct rpmsg_endpoint_info info;
+                sprintf(info.name, "%s__p", channel);
+                info.src = RPMSG_ADDR_ANY;
+                info.dst = RPMSG_ADDR_ANY;
+                int dev_num = createEptDev(&info);
+                if (dev_num == -1)
+                {
+                    return;
+                }
+                char dev_path[24];
+                sprintf(dev_path, "/dev/rpmsg%d", dev_num);
+                int fd = open(dev_path, O_WRONLY);
+                publisher_fds_[std::string(channel)] = fd;
+            }
+            write(publisher_fds_[std::string(channel)], msg, size);
+        }
     }
 
     void DispatchCallbacks()
@@ -177,6 +200,8 @@ private:
     std::map<int, std::function<void(void)>> fd_callbacks_;
     std::map<std::string, int> publisher_fds_;
     int epoll_fd_;
+    bool use_lcm_{true};
+    bool use_rpmsg_{true};
 };
 
 Dragonet::Dragonet()

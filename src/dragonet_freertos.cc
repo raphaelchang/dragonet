@@ -46,15 +46,10 @@ public:
         subscriber_queues_mutex_ = xSemaphoreCreateMutex();
         publish_epts_mutex_ = xSemaphoreCreateMutex();
         pending_subscriptions_ = xQueueCreate(16, sizeof(PendingSubscription_t));
-        while (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING)
-        {
-        }
         env_init();
         rpmsg_ = rpmsg_lite_remote_init(rpmsg_lite_base_, PLATFORM_LINK_ID, RL_NO_FLAGS);
         rpmsg_ns_bind(rpmsg_, publisher_ns_new_ept_cb, this);
-        while (!rpmsg_lite_is_link_up(rpmsg_))
-        {
-        }
+        while (!rpmsg_lite_is_link_up(rpmsg_));
     }
 
     ~DragonetImpl()
