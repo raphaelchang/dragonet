@@ -18,8 +18,12 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     SOVERSION 1
     PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/inc/dragonet.h)
 
-install(TARGETS ${PROJECT_NAME}
+add_executable(${PROJECT_NAME}_echo ${CMAKE_CURRENT_SOURCE_DIR}/tools/dragonet_echo/dragonet_echo.cc)
+target_link_libraries(${PROJECT_NAME}_echo dragonet)
+
+install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_echo
     LIBRARY DESTINATION lib
-    PUBLIC_HEADER DESTINATION include)
+    PUBLIC_HEADER DESTINATION include
+    RUNTIME DESTINATION bin)
 
 export(PACKAGE ${PROJECT_NAME})

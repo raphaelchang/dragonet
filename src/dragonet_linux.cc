@@ -54,7 +54,8 @@ public:
     {
         if (use_lcm_)
         {
-            lcm_.subscribeFunction(std::string(channel), lcmCallback, &callback);
+            lcm_callbacks_[std::string(channel)] = callback;
+            lcm_.subscribeFunction(std::string(channel), lcmCallback, this);
         }
 
         if (use_rpmsg_)
@@ -191,14 +192,15 @@ private:
         int res = epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event);
     }
 
-    static void lcmCallback(const lcm::ReceiveBuffer* rbuf, const std::string& channel, std::function<void(char*)> *callback)
+    static void lcmCallback(const lcm::ReceiveBuffer* rbuf, const std::string& channel, DragonetImpl *impl_instance)
     {
-        (*callback)((char*) rbuf->data);
+        impl_instance->lcm_callbacks_[channel]((char*) rbuf->data);
     };
 
     lcm::LCM lcm_;
     std::map<int, std::function<void(void)>> fd_callbacks_;
     std::map<std::string, int> publisher_fds_;
+    std::map<std::string, std::function<void(char*)>> lcm_callbacks_;
     int epoll_fd_;
     bool use_lcm_{true};
     bool use_rpmsg_{true};
