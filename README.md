@@ -7,6 +7,8 @@ Publish-subscribe IPC framework for heterogenous multi-core embedded systems run
 ## Usage
 ### Installing on Linux
 For the MPU side running Linux, the package is built as a shared library. You will also need to modify the RPMsg-char driver  (available in Linux >= 4.11) with this [patch](https://github.com/OpenAMP/meta-openamp/blob/master/recipes-kernel/linux/openamp-kmeta/cfg/0001-rpmsg-virtio-rpmsg-Add-RPMsg-char-driver-support.patch).
+
+Install LCM by following the instructions [here](https://lcm-proj.github.io/build_instructions.html). Then, run the following commands to install the Dragonet library.
 ```
 cmake .
 make
