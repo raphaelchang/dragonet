@@ -196,7 +196,7 @@ void Dragonet::Init()
 
 void Dragonet::Spin()
 {
-    while(true)
+    while (true)
     {
         impl_->DispatchCallbacks();
     }
