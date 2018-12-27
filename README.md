@@ -4,6 +4,8 @@
 
 Publish-subscribe IPC framework for heterogenous multi-core embedded systems running Linux and FreeRTOS, using [LCM](https://github.com/lcm-proj/lcm), [RPMsg](https://github.com/OpenAMP/open-amp/tree/master/lib/rpmsg), and FreeRTOS queues. Currently supports the i.MX 6SoloX (tested on [Dragonflyte flight computer](https://github.com/raphaelchang/dragonflyte-hardware)).
 
+<img width="500" src="https://raphaelchang.com/wp-content/uploads/2018/12/dragonet.png">
+
 ## Setup
 ### Installing on Linux
 For the MPU side running Linux, the package is built as a shared library. You will also need to modify the RPMsg-char driver  (available in Linux >= 4.11) with this [patch](https://github.com/OpenAMP/meta-openamp/blob/master/recipes-kernel/linux/openamp-kmeta/cfg/0001-rpmsg-virtio-rpmsg-Add-RPMsg-char-driver-support.patch).
