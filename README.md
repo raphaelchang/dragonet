@@ -4,7 +4,7 @@
 
 Publish-subscribe IPC framework for heterogenous multi-core embedded systems running Linux and FreeRTOS, using [LCM](https://github.com/lcm-proj/lcm), [RPMsg](https://github.com/OpenAMP/open-amp/tree/master/lib/rpmsg), and FreeRTOS queues. Currently supports the i.MX 6SoloX (tested on [Dragonflyte flight computer](https://github.com/raphaelchang/dragonflyte-hardware)).
 
-<img width="500" src="https://raphaelchang.com/wp-content/uploads/2018/12/dragonet.png">
+<img width="400" src="https://raphaelchang.com/wp-content/uploads/2018/12/dragonet.png">
 
 ## Setup
 ### Installing on Linux
